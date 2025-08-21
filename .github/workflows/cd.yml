@@ -1,0 +1,94 @@
+name: CD Pipeline
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: website-files
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        run-id: ${{ github.event.workflow_run.id }}
+    
+    - name: Extract files
+      run: |
+        echo "Extracting files..."
+        mkdir -p /home/hp/website
+        unzip -o website.zip -d /home/hp/website/
+        echo "Files extracted to /home/hp/website/!"
+        ls -la /home/hp/website/
+    
+    - name: Set up Node.js if not installed
+      run: |
+        if ! command -v node &> /dev/null; then
+          echo "Installing Node.js..."
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+        fi
+        node --version
+    
+    - name: Install dependencies
+      working-directory: /home/hp/website
+      run: npm install
+    
+    - name: Install PM2 globally if not installed
+      run: |
+        if ! command -v pm2 &> /dev/null; then
+          echo "Installing PM2..."
+          sudo npm install -g pm2
+        fi
+        pm2 --version
+    
+    - name: Stop existing server
+      working-directory: /home/hp/website
+      run: |
+        echo "Stopping any existing PM2 app..."
+        pm2 delete hello-world || echo "No existing PM2 app found"
+        # Also kill any processes on port 3000 as fallback
+        if lsof -ti:3000 >/dev/null 2>&1; then
+          echo "Killing processes on port 3000..."
+          sudo kill -9 $(lsof -ti:3000) || echo "Could not kill processes on port 3000"
+        fi
+    
+    - name: Start Node.js app with PM2
+      working-directory: /home/hp/website
+      run: |
+        echo "Starting app with PM2..."
+        pm2 start index.js --name hello-world
+        pm2 save  # Save PM2 process list for persistence across reboots
+        pm2 startup  # Optional: Set up PM2 to start on system boot (run as sudo if prompted)
+        echo "App started with PM2!"
+    
+    - name: Verify server is accessible
+      run: |
+        echo "Testing server accessibility..."
+        sleep 5
+        # Test if server responds locally
+        for i in {1..10}; do
+          if curl -s http://localhost:3000 >/dev/null 2>&1; then
+            echo "Server responds on localhost:3000"
+            break
+          else
+            echo "Attempt $i: Server not ready, waiting..."
+            sleep 2
+          fi
+        done
+        # Test external accessibility
+        if curl -s http://172.26.60.61:3000 >/dev/null 2>&1; then
+          echo "✅ Website is live at http://172.26.60.61:3000"
+        else
+          echo "❌ Server not responding externally"
+          pm2 logs hello-world --lines 20  # Show PM2 logs for debugging
+          pm2 status
+          exit 1
+        fi
+        echo "🎉 Deployment complete! Website running persistently with PM2."
+        echo "🌐 Access your website at: http://172.26.60.61:3000"
