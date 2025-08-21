@@ -39,11 +39,11 @@ jobs:
       working-directory: /home/hp/website
       run: npm install
     
-    - name: Install PM2 globally if not installed
+    - name: Verify PM2 (pre-installed)
       run: |
         if ! command -v pm2 &> /dev/null; then
-          echo "Installing PM2..."
-          sudo npm install -g pm2
+          echo "PM2 not found! Exiting..."
+          exit 1
         fi
         pm2 --version
     
@@ -52,7 +52,6 @@ jobs:
       run: |
         echo "Stopping any existing PM2 app..."
         pm2 delete hello-world || echo "No existing PM2 app found"
-        # Also kill any processes on port 3000 as fallback
         if lsof -ti:3000 >/dev/null 2>&1; then
           echo "Killing processes on port 3000..."
           sudo kill -9 $(lsof -ti:3000) || echo "Could not kill processes on port 3000"
@@ -63,15 +62,14 @@ jobs:
       run: |
         echo "Starting app with PM2..."
         pm2 start index.js --name hello-world
-        pm2 save  # Save PM2 process list for persistence across reboots
-        pm2 startup  # Optional: Set up PM2 to start on system boot (run as sudo if prompted)
+        pm2 save
+        pm2 startup
         echo "App started with PM2!"
     
     - name: Verify server is accessible
       run: |
         echo "Testing server accessibility..."
         sleep 5
-        # Test if server responds locally
         for i in {1..10}; do
           if curl -s http://localhost:3000 >/dev/null 2>&1; then
             echo "Server responds on localhost:3000"
@@ -81,12 +79,11 @@ jobs:
             sleep 2
           fi
         done
-        # Test external accessibility
         if curl -s http://172.26.60.61:3000 >/dev/null 2>&1; then
           echo "✅ Website is live at http://172.26.60.61:3000"
         else
           echo "❌ Server not responding externally"
-          pm2 logs hello-world --lines 20  # Show PM2 logs for debugging
+          pm2 logs hello-world --lines 20
           pm2 status
           exit 1
         fi
